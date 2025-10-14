@@ -1,0 +1,89 @@
+- name: Download MinIO Server
+  get_url:
+    url: https://dl.min.io/server/minio/release/linux-amd64/minio
+    dest: /usr/local/bin/minio
+    mode: '0755'
+
+- name: Download MinIO Client (mc)
+  get_url:
+    url: https://dl.min.io/client/mc/release/linux-amd64/mc
+    dest: /usr/local/bin/mc
+    mode: '0755'
+
+- name: Create MinIO user
+  user:
+    name: minio-user
+    shell: /bin/bash
+
+- name: Create MinIO data directory
+  file:
+    path: /data
+    state: directory
+    owner: minio-user
+    group: minio-user
+
+- name: Create MinIO config directory
+  file:
+    path: /etc/minio
+    state: directory
+
+- name: Configure MinIO environment file
+  copy:
+    dest: /etc/default/minio
+    content: |
+      MINIO_ROOT_USER=minioadmin
+      MINIO_ROOT_PASSWORD=minioadmin
+      MINIO_VOLUMES=/data
+
+- name: Install MinIO service
+  copy:
+    dest: /etc/systemd/system/minio.service
+    content: |
+      [Unit]
+      Description=MinIO
+      After=network.target
+
+      [Service]
+      User=minio-user
+      Group=minio-user
+      WorkingDirectory=/usr/local/bin/
+      EnvironmentFile=/etc/default/minio
+      ExecStart=/usr/local/bin/minio server $MINIO_VOLUMES --console-address ":9001"
+
+      [Install]
+      WantedBy=multi-user.target
+
+- name: Start and enable MinIO service
+  systemd:
+    name: minio
+    enabled: yes
+    state: started
+    daemon_reload: yes
+
+- name: Wait for MinIO to be ready
+  wait_for:
+    port: 9000
+    delay: 10
+    timeout: 60
+
+- name: Configure mc alias
+  command: >
+    sudo -u minio-user /usr/local/bin/mc alias set local http://127.0.0.1:9000 minioadmin minioadmin
+  environment:
+    HOME: /home/minio-user
+  become: yes
+
+
+- name: Create MinIO buckets
+  command: >
+    sudo -u minio-user /usr/local/bin/mc mb local/{{ item }}
+  environment:
+    HOME: /home/minio-user
+  become: yes
+  loop:
+    - raw
+    - processed
+    - curated
+  ignore_errors: yes
+
+

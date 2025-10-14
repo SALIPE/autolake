@@ -1,0 +1,14 @@
+[control_plane]
+vm-control-plane
+
+[data_plane]
+vm-data-plane
+
+[services]
+vm-services
+
+
+
+[storage]
+vm-storage
+

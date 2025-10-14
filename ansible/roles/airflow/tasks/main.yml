@@ -1,0 +1,5 @@
+- name: Install Airflow
+  pip:
+    name: apache-airflow
+    state: present
+

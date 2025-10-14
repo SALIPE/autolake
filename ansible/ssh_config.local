@@ -1,0 +1,5 @@
+Host 192.168.*.*
+    User ansible
+    StrictHostKeyChecking accept-new
+    UserKnownHostsFile ./terraform_known_hosts
+    IdentityFile ./keys/ansible_key.pem

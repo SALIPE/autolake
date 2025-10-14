@@ -1,0 +1,21 @@
+---
+- hosts: all
+  become: yes
+  roles:
+    - common
+
+- hosts: control_plane
+  become: yes
+  roles:
+    - airflow
+
+- hosts: data_plane
+  become: yes
+  roles:
+    - spark
+
+- hosts: storage
+  become: yes
+  roles:
+    - minio
+
