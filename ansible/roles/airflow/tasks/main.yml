@@ -1,5 +1,209 @@
-- name: Install Airflow
-  pip:
-    name: apache-airflow
+- name: Atualizar pacotes do sistema
+  apt:
+    update_cache: yes
+    upgrade: yes
+
+- name: Remover docker-compose antigo (Python)
+  apt:
+    name: docker-compose
+    state: absent
+    purge: yes
+  ignore_errors: true
+
+- name: Instalar dependências básicas
+  apt:
+    name:
+      - python3
+      - python3-pip
+      - docker.io
+      - curl
+      - git
     state: present
 
+- name: Instalar plugin moderno "docker compose"
+  shell: |
+    mkdir -p /usr/lib/docker/cli-plugins
+    curl -SL https://github.com/docker/compose/releases/download/v2.29.2/docker-compose-linux-x86_64 \
+      -o /usr/lib/docker/cli-plugins/docker-compose
+    chmod +x /usr/lib/docker/cli-plugins/docker-compose
+
+- name: Verificar versão do compose plugin
+  shell: docker compose version
+  register: compose_ver
+  changed_when: false
+
+- debug:
+    var: compose_ver.stdout_lines
+
+- name: Criar usuário airflow se não existir
+  user:
+    name: "{{ airflow_user }}"
+    home: "{{ airflow_home }}"
+    shell: /bin/bash
+    create_home: yes
+    state: present
+
+- name: Criar diretórios de trabalho do Airflow
+  file:
+    path: "{{ airflow_home }}/{{ item }}"
+    state: directory
+    owner: "{{ airflow_user }}"
+    group: "{{ airflow_user }}"
+    mode: "0755"
+  loop:
+    - dags
+    - logs
+    - plugins
+
+- name: Criar arquivo docker-compose.yaml do Airflow
+  copy:
+    dest: "{{ airflow_home }}/docker-compose.yaml"
+    content: |
+      version: '3.9'
+      x-airflow-common:
+        &airflow-common
+        image: {{ airflow_image }}
+        environment:
+          &airflow-common-env
+          AIRFLOW__CORE__EXECUTOR: LocalExecutor
+          AIRFLOW__CORE__FERNET_KEY: ''
+          AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: 'true'
+          AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
+          AIRFLOW__API__AUTH_BACKENDS: 'airflow.api.auth.backend.basic_auth'
+          AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/airflow
+          AIRFLOW_CONN_SPARK_DEFAULT: "spark://{{ spark_host }}:7077"
+          AIRFLOW_CONN_MINIO_DEFAULT: "s3a://{{ minio_access_key }}:{{ minio_secret_key }}@{{ minio_host }}:{{ minio_port }}"
+          _PIP_ADDITIONAL_REQUIREMENTS: ${_PIP_ADDITIONAL_REQUIREMENTS:-}
+        volumes:
+          - ./dags:/opt/airflow/dags
+          - ./logs:/opt/airflow/logs
+          - ./plugins:/opt/airflow/plugins
+        depends_on:
+          postgres:
+            condition: service_healthy
+
+      services:
+        postgres:
+          image: postgres:15
+          environment:
+            POSTGRES_USER: airflow
+            POSTGRES_PASSWORD: airflow
+            POSTGRES_DB: airflow
+          healthcheck:
+            test: ["CMD-SHELL", "pg_isready -U airflow"]
+            interval: 5s
+            retries: 5
+            timeout: 5s
+          volumes:
+            - postgres-db-volume:/var/lib/postgresql/data
+          restart: always
+
+        airflow-init:
+          <<: *airflow-common
+          command: >
+            bash -c "airflow db migrate &&
+                      airflow users create --username admin --password admin
+                      --firstname Admin --lastname User
+                      --role Admin --email admin@example.com || true"
+          restart: "no"
+
+        airflow-webserver:
+          <<: *airflow-common
+          command: webserver
+          ports:
+            - "8080:8080"
+          healthcheck:
+            test: ["CMD-SHELL", "curl -f http://localhost:8080/health || exit 1"]
+            interval: 10s
+            timeout: 10s
+            retries: 6
+          restart: always
+          depends_on:
+            - airflow-init
+            - airflow-scheduler
+            - postgres
+
+        airflow-scheduler:
+          <<: *airflow-common
+          command: scheduler
+          restart: always
+          depends_on:
+            - airflow-init
+            - postgres
+
+        airflow-api:
+          <<: *airflow-common
+          command: standalone
+          ports:
+            - "8081:8081"
+          restart: always
+          depends_on:
+            - postgres
+            - airflow-init
+
+        flower:
+          <<: *airflow-common
+          command: celery flower
+          ports:
+            - "5555:5555"
+          restart: always
+          depends_on:
+            - postgres
+            - airflow-scheduler
+            - airflow-init
+
+      volumes:
+        postgres-db-volume:
+
+- name: Subir containers do Airflow com plugin moderno
+  shell: |
+    cd {{ airflow_home }}
+    docker compose up -d
+  args:
+    executable: /bin/bash
+  register: compose_output
+
+- name: Exibir saída do docker compose
+  debug:
+    var: compose_output.stdout_lines
+
+- name: Esperar o Airflow Webserver iniciar (até 10 minutos)
+  shell: |
+    IP=$(hostname -I | awk '{print $1}')
+    echo "Verificando Airflow em http://${IP}:8080 ..."
+    for i in {1..60}; do
+      if curl -sf "http://${IP}:8080/health" | grep -q '"status":"healthy"'; then
+        echo "✅ Airflow webserver está pronto!"
+        exit 0
+      else
+        echo "Aguardando o webserver iniciar ($i/60)..."
+        sleep 10
+      fi
+    done
+    echo "❌ Timeout: Airflow não respondeu após 10 minutos."
+    echo "Logs recentes do container:"
+    docker compose logs --tail=40 airflow-webserver
+    exit 1
+  args:
+    executable: /bin/bash
+  register: wait_output
+  ignore_errors: true
+
+- debug:
+    var: wait_output.stdout_lines
+
+- name: Exibir containers ativos
+  shell: docker compose ps
+  register: docker_ps_output
+
+- debug:
+    var: docker_ps_output.stdout_lines
+
+- name: Mensagem final
+  debug:
+    msg: >
+      ✅ Airflow 3.0.3 implantado com sucesso!
+      🌐 Web UI: http://<IP_da_VM>:8080  
+      🔗 API: http://<IP_da_VM>:8081  
+      🌸 Flower: http://<IP_da_VM>:5555  
+      👤 Usuário: admin | 🔑 Senha: admin

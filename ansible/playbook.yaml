@@ -1,21 +1,20 @@
 ---
 - hosts: all
-  become: yes
+  become: true
   roles:
     - common
 
 - hosts: control_plane
-  become: yes
+  become: true
   roles:
     - airflow
 
 - hosts: data_plane
-  become: yes
+  become: true
   roles:
     - spark
 
 - hosts: storage
-  become: yes
+  become: true
   roles:
     - minio
-

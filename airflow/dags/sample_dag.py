@@ -1,6 +1,8 @@
-from airflow import DAG
-from airflow.operators.bash_operator import BashOperator
 from datetime import datetime
+
+from airflow.operators.bash import BashOperator
+
+from airflow import DAG
 
 default_args = {
     'owner': 'airflow',
@@ -8,10 +10,14 @@ default_args = {
 }
 
 dag = DAG(
-    'minio_etl_dag',
+    dag_id="sample_dag",
     default_args=default_args,
-    schedule_interval='@daily',
+    description="Exemplo simples de DAG",
+    schedule="@daily",
+    start_date=datetime(2025, 1, 1),
+    catchup=False,
 )
+
 
 spark_submit_command = """
 spark-submit --master spark://spark-master:7077 \

@@ -1,0 +1,8 @@
+airflow_home: /opt/airflow
+airflow_user: airflow
+airflow_image: apache/airflow:3.0.3
+spark_host: 192.168.122.233
+minio_host: 192.168.122.233
+minio_port: 9000
+minio_access_key: minioadmin
+minio_secret_key: minioadmin
